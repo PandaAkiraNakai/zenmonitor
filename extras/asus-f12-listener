@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""Escucha la tecla F12 (KEY_PROG1) del dispositivo 'Asus WMI hotkeys' y abre ZenMonitor.
+
+Es la tecla con el logo de Zen; en Windows la usa MyASUS. Se lee el evento crudo
+del kernel en vez de atarla desde KDE, igual que con la F10: xkb le asigna un
+keysym de la familia XF86Launch, que Qt/kglobalaccel no consiguen disparar.
+ZenMonitor es de instancia unica, asi que volver a lanzarlo alterna la ventana.
+"""
+import os, struct, subprocess, sys, time
+
+FORMATO = 'llHHi'                      # input_event en 64 bits
+TAM = struct.calcsize(FORMATO)
+EV_KEY, KEY_PROG1, PULSACION = 0x01, 148, 1
+ZENMONITOR = os.path.expanduser('~/.local/bin/zenmonitor')
+
+
+def buscar_dispositivo(nombre='Asus WMI hotkeys'):
+    """Localiza el eventN por nombre; el índice cambia entre arranques."""
+    with open('/proc/bus/input/devices') as f:
+        bloque = ''
+        for linea in f:
+            if linea.strip() == '':
+                if nombre in bloque:
+                    for parte in bloque.split():
+                        if parte.startswith('event'):
+                            return '/dev/input/' + parte
+                bloque = ''
+            else:
+                bloque += linea
+    return None
+
+
+def main():
+    ruta = None
+    for _ in range(30):                # el dispositivo puede tardar en aparecer
+        ruta = buscar_dispositivo()
+        if ruta and os.access(ruta, os.R_OK):
+            break
+        time.sleep(1)
+    if not ruta:
+        print('no encuentro el dispositivo Asus WMI hotkeys', file=sys.stderr)
+        return 1
+    print(f'escuchando {ruta}', flush=True)
+
+    ultimo = 0.0
+    with open(ruta, 'rb') as dev:
+        while True:
+            datos = dev.read(TAM)
+            if not datos:
+                break
+            _, _, tipo, codigo, valor = struct.unpack(FORMATO, datos)
+            if tipo == EV_KEY and codigo == KEY_PROG1 and valor == PULSACION:
+                ahora = time.monotonic()
+                if ahora - ultimo < 0.3:   # antirrebote
+                    continue
+                ultimo = ahora
+                subprocess.Popen([ZENMONITOR])
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

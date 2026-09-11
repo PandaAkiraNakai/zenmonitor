@@ -1,0 +1,12 @@
+[Unit]
+Description=Tecla F12 del Zenbook (logo Zen) -> abre ZenMonitor
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/asus-f12-listener
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
