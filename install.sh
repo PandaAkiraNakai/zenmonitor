@@ -63,6 +63,34 @@ Keywords=ventilador;fan;rpm;temperatura;perfil;zenmonitor;
 StartupNotify=true
 ESCRITORIO
 
+# KWin no deja que una ventana ya abierta se traiga al frente sola: al pedir
+# activacion sin un token de Wayland la marca como que "reclama atencion" (el
+# parpadeo naranja en la barra de tareas) en vez de levantarla. Una regla de
+# ventana que desactive esa proteccion solo para ZenMonitor lo arregla.
+REGLA_ID="4d0a1b6e-5c2f-4a71-9f3b-7e1c8a2d6f40"
+anadir_regla_kwin() {
+    command -v kwriteconfig6 >/dev/null || return 0
+    local previas
+    previas="$(kreadconfig6 --file kwinrulesrc --group General --key rules 2>/dev/null || true)"
+    case ",$previas," in
+        *",$REGLA_ID,"*) return 0 ;;        # ya estaba, no duplicar
+    esac
+    kwriteconfig6 --file kwinrulesrc --group "$REGLA_ID" --key Description \
+        "ZenMonitor: dejar que se traiga al frente sola"
+    kwriteconfig6 --file kwinrulesrc --group "$REGLA_ID" --key wmclass zenmonitor
+    kwriteconfig6 --file kwinrulesrc --group "$REGLA_ID" --key wmclassmatch 1
+    kwriteconfig6 --file kwinrulesrc --group "$REGLA_ID" --key fsplevel 0
+    kwriteconfig6 --file kwinrulesrc --group "$REGLA_ID" --key fsplevelrule 2
+    kwriteconfig6 --file kwinrulesrc --group General --key rules \
+        "${previas:+$previas,}$REGLA_ID"
+    kwriteconfig6 --file kwinrulesrc --group General --key count \
+        "$(( $(printf '%s' "${previas:+$previas,}$REGLA_ID" | tr ',' '\n' | grep -c .) ))"
+    gdbus call --session --dest org.kde.KWin --object-path /KWin \
+        --method org.kde.KWin.reconfigure >/dev/null 2>&1 || true
+    echo "regla de KWin anadida (la ventana ya se trae al frente sola)"
+}
+anadir_regla_kwin
+
 if [ "$autostart" = 1 ]; then
     install -d "$CONF/autostart"
     cat > "$CONF/autostart/zenmonitor.desktop" <<AUTO

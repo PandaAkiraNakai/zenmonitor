@@ -67,7 +67,9 @@ cd zenmonitor
 ./install.sh
 ```
 
-Todo va a parar a `~/.local`, sin root y sin tocar el sistema. Opciones:
+Todo va a parar a `~/.local`, sin root y sin tocar el sistema: el script, un lanzador,
+la entrada del menú, el icono (que se dibuja desde el vector del propio código) y una
+regla de ventana de KWin —ver más abajo—. Opciones:
 
 ```sh
 ./install.sh --autostart   # arranca con la sesión, en segundo plano (solo bandeja)
@@ -98,6 +100,29 @@ cambia entre arranques) y lanza ZenMonitor. Requiere estar en el grupo `input`:
 ```sh
 sudo usermod -aG input "$USER"   # y volver a iniciar sesión
 ```
+
+### Traer la ventana al frente
+
+Hay una segunda pieza, y no es del teclado. KWin no deja que una ventana ya abierta se
+ponga al frente por su cuenta: si ZenMonitor está abierto pero detrás de otra ventana, su
+petición de activación —que llega sin un token de Wayland, porque no nace de un clic sobre
+la propia app— no la levanta, solo le pone en **naranja** la entrada de la barra de tareas.
+
+`install.sh` añade una regla de ventana que desactiva la prevención de robo de foco
+**solo para ZenMonitor**:
+
+```ini
+[<uuid>]
+wmclass=zenmonitor
+wmclassmatch=1
+fsplevel=0          # prevención de robo de foco: ninguna
+fsplevelrule=2      # forzar
+```
+
+Con eso la tecla la trae al frente de verdad, y una segunda pulsación la esconde. La regla
+se añade respetando las que ya tengas, y `uninstall.sh` quita solo la suya. Si la ventana
+estaba en otro escritorio virtual, KDE te lleva a él, igual que al pulsar su entrada en la
+barra de tareas.
 
 ## De dónde sale cada dato
 
