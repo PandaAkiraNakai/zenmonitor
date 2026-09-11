@@ -2,7 +2,8 @@
 
 Monitor ligero para el **ASUS Zenbook 14 UM3406GA** (Ryzen AI 7 445 + Radeon 840M) en
 Linux con KDE: ventilador, carga de CPU/GPU/RAM/VRAM, ancho de banda de la memoria,
-temperaturas, consumo y los tres perfiles de plataforma. Vive en la bandeja del sistema
+temperaturas, consumo, los tres perfiles de plataforma y el límite de carga de la
+batería. Vive en la bandeja del sistema
 y pesa lo que pesa un script de Python con PyQt6.
 
 ![ZenMonitor en reposo y bajo carga](docs/zenmonitor.png)
@@ -23,6 +24,7 @@ el propio firmware del portátil pinta al arrancar, redibujado como vector.
 | **Temperaturas** | APU, sistema y SSD |
 | **Energía** | Potencia de la APU y consumo total del equipo |
 | **Perfil** | Silencioso / Equilibrado / Rendimiento, vía `power-profiles-daemon` |
+| **Batería** | Interruptor del límite de fin de carga: 80 % o 100 %, vía `asusctl` |
 
 Cada medidor lleva un tooltip con el detalle: hilos y gobernador de la CPU, reloj máximo
 de la GPU, caché y zram, memoria compartida (GTT), reparto de lectura/escritura de la DRAM.
@@ -51,10 +53,35 @@ Equilibrado son **900 RPM menos** que Rendimiento a cambio de 3 °C más: es el 
 compensa si molesta el ruido. Silencioso calla porque estrangula la APU a un quinto de su
 potencia.
 
+## El límite de carga de la batería
+
+El interruptor **Proteger la batería (80 %)** alterna el umbral de fin de carga entre 80 y
+100 %. No es un ajuste de software: lo aplica el controlador embebido, que simplemente deja
+de cargar al llegar al tope (no descarga si ya estás por encima). Una batería de litio que
+no vive al 100 % envejece bastante más despacio, así que 80 % es el valor para el uso
+diario y 100 % el de antes de un viaje.
+
+ZenMonitor lo cambia con `asusctl battery limit <n>`, que habla por D-Bus con `asusd` y
+**no pide contraseña** aunque el fichero de sysfs sea de root. El estado se lee
+directamente de `/sys/class/power_supply/BAT*/charge_control_end_threshold`, así que el
+botón refleja siempre el valor real: si otra herramienta lo cambia, o si la escritura
+falla, el botón vuelve solo a su sitio. El ajuste lo guarda `asusd` y sobrevive al
+reinicio.
+
+Un detalle de KDE: **Plasma lee el umbral una sola vez al arrancar la sesión y no vuelve
+a mirarlo**, así que «Energía y batería» se quedaría diciendo *«configurada para cargar
+hasta aproximadamente el 80 %»* mucho después de haberlo desactivado. Al cambiarlo,
+ZenMonitor llama a `refreshStatus` de PowerDevil por D-Bus para que lo relea (solo lee:
+no escribe el umbral ni reaplica el perfil de energía). El aviso se manda **después** de
+comprobar que el valor ya está escrito, porque `asusd` tarda un instante y si no KDE
+volvería a leer el valor viejo.
+
 ## Requisitos
 
 - Python 3 y PyQt6 (`pacman -S python-pyqt6` en Arch; `python3-pyqt6` en Debian/Ubuntu).
 - `power-profiles-daemon` para cambiar de perfil (si no está, el resto sigue funcionando).
+- `asusctl`/`asusd` para el límite de carga. Si el equipo no expone
+  `charge_control_end_threshold`, el interruptor no aparece y el resto funciona igual.
 - Una APU AMD con el driver `amdgpu`. El ancho de banda de la DRAM y el reloj de memoria
   necesitan que el driver publique `gpu_metrics` en revisión **3.0** (Ryzen AI / Strix,
   Krackan); en otras revisiones esos dos campos salen como `--` y lo demás funciona igual.
@@ -81,7 +108,7 @@ Para quitarlo: `./uninstall.sh`.
 ## Uso
 
 - Clic en el icono de la bandeja: muestra u oculta la ventana.
-- Clic derecho: cambiar de perfil o salir.
+- Clic derecho: cambiar de perfil, activar el límite de batería o salir.
 - Cerrar la ventana la esconde en la bandeja; no cierra la aplicación.
 - `zenmonitor --tray` arranca sin ventana (es lo que usa el autoarranque).
 - Es de **instancia única**: volver a lanzarlo no abre otra copia, le pide la ventana a
@@ -141,6 +168,7 @@ barra de tareas.
 | VRAM y memoria compartida | `mem_info_vram_*` y `mem_info_gtt_*` |
 | Ancho de banda DRAM y UCLK | `gpu_metrics` |
 | Perfil actual | `/sys/firmware/acpi/platform_profile` |
+| Límite de carga | `/sys/class/power_supply/BAT*/charge_control_end_threshold` |
 
 ### Nota sobre `gpu_metrics`
 

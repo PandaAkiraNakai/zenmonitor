@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """ZenMonitor - monitor del ASUS Zenbook 14 UM3406GA: ventilador, carga y energia.
 
+Ademas del monitor, las dos unicas palancas que este equipo si deja tocar:
+el perfil de plataforma y el limite de fin de carga de la bateria (80 / 100 %).
+
 Medido en este equipo el 2026-09-11: el EC no deja fijar la velocidad.
 No existe el nodo pwm1, y pwm1_enable=0 (el "full speed" del driver asus-wmi)
 no fuerza nada -- con el equipo frio el ventilador se para igual y el valor se
 revierte solo a 2. asusd tampoco publica xyz.ljones.FanCurves para esta placa.
-La unica palanca real es el perfil de plataforma, que si cambia la curva del EC:
-con carga fija se midieron 3787 RPM (performance), 2875 (balanced) y 1975 (quiet).
+Sobre el ventilador la unica palanca es el perfil de plataforma, que si cambia
+la curva del EC: con carga fija se midieron 3787 RPM (performance),
+2875 (balanced) y 1975 (quiet).
 Se cambia por power-profiles-daemon para no pelearse con el widget de KDE.
 """
 
@@ -28,6 +32,11 @@ from PyQt6.QtWidgets import (QApplication, QButtonGroup, QFrame, QGridLayout,
 RPM_MAX = 6000
 POLL_MS = 1500
 HISTORY = 80
+
+# Limite de fin de carga: el EC deja de cargar al llegar, no descarga.
+CARGA_PROTEGIDA = 80
+CARGA_COMPLETA = 100
+BATERIA = "/sys/class/power_supply/BAT*/"
 
 PROFILES = [
     ("power-saver", "Silencioso",
@@ -238,6 +247,45 @@ class Hardware:
         except (OSError, subprocess.SubprocessError):
             return False
 
+    def charge_limit(self):
+        """Umbral de fin de carga, o None si el equipo no lo expone."""
+        for path in glob.glob(BATERIA + "charge_control_end_threshold"):
+            valor = read(path, int)
+            if valor is not None:
+                return valor
+        return None
+
+    def set_charge_limit(self, valor):
+        """Lo aplica asusd: el sysfs es de root, pero su D-Bus acepta al usuario."""
+        try:
+            r = subprocess.run(["asusctl", "battery", "limit", str(valor)],
+                               capture_output=True, text=True, timeout=8)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return r.returncode == 0
+
+    @staticmethod
+    def nudge_powerdevil():
+        """KDE lee el umbral una vez al arrancar la sesion y no vuelve a mirarlo,
+        asi que "Energia y bateria" se quedaria con el valor viejo. refreshStatus
+        le hace releerlo del sysfs (no escribe nada ni reaplica el perfil).
+        Hay que llamarlo cuando asusd ya ha escrito, no antes: la escritura
+        tarda un momento y KDE releeria el valor viejo. Sin KDE no pasa nada."""
+        try:
+            subprocess.run(["busctl", "--user", "call",
+                            "org.kde.Solid.PowerManagement",
+                            "/org/kde/Solid/PowerManagement",
+                            "org.kde.Solid.PowerManagement", "refreshStatus"],
+                           capture_output=True, timeout=4)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def battery(self):
+        for path in glob.glob(BATERIA + "capacity"):
+            return {"pct": read(path, int),
+                    "estado": read(path.replace("capacity", "status"))}
+        return {"pct": None, "estado": None}
+
 
 class Gauge(QWidget):
     """Arco con las RPM actuales."""
@@ -356,6 +404,9 @@ class Spark(QWidget):
 
 
 IPC = f"zenmonitor-{os.getuid()}"
+
+BAT_ESTADO = {"Discharging": "descargando", "Charging": "cargando",
+              "Full": "llena", "Not charging": "en pausa"}
 
 PLATFORM_TO_PPD = {"quiet": "power-saver", "balanced": "balanced",
                    "performance": "performance"}
@@ -488,6 +539,7 @@ class ZenMonitor(QWidget):
         super().__init__()
         self.hw = Hardware()
         self.tray_accent = BLUE
+        self.limite_pedido = None       # umbral en vuelo, para avisar a KDE
         self.setWindowTitle("ZenMonitor")
         self.setMinimumWidth(360)
         self.build()
@@ -536,7 +588,7 @@ class ZenMonitor(QWidget):
         row2.addWidget(self.w_all)
         root.addLayout(row2)
 
-        perfil = self.section("Perfil")
+        perfil = self.section("Perfil y batería")
         perfil.setToolTip(
             "Este equipo no admite velocidad manual de ventilador: no hay nodo pwm1 "
             "y el EC ignora pwm1_enable=0.\nLa curva la fija el perfil.")
@@ -556,6 +608,14 @@ class ZenMonitor(QWidget):
             self.group.addButton(b, idx)
             prow.addWidget(b)
         root.addLayout(prow)
+
+        # Solo se construye si el equipo expone el umbral (asusd + asus-wmi).
+        self.bat_btn = QPushButton(f"Proteger la batería ({CARGA_PROTEGIDA} %)")
+        self.bat_btn.setCheckable(True)
+        self.bat_btn.setObjectName("profile")
+        self.bat_btn.clicked.connect(self.apply_charge_limit)
+        self.bat_btn.setVisible(self.hw.charge_limit() is not None)
+        root.addWidget(self.bat_btn)
 
         # Solo aparece si algo falla; el resto del tiempo no ocupa sitio.
         self.note = QLabel()
@@ -608,6 +668,12 @@ class ZenMonitor(QWidget):
             menu.addAction(act)
             self.tray_profiles[pid] = act
         menu.addSeparator()
+        self.tray_bat = QAction(f"Proteger la batería ({CARGA_PROTEGIDA} %)",
+                                self, checkable=True)
+        self.tray_bat.triggered.connect(self.apply_charge_limit)
+        self.tray_bat.setVisible(self.hw.charge_limit() is not None)
+        menu.addAction(self.tray_bat)
+        menu.addSeparator()
         show = QAction("Mostrar ventana", self)
         show.triggered.connect(self.show_window)
         menu.addAction(show)
@@ -628,6 +694,15 @@ class ZenMonitor(QWidget):
             self.note.setText("No se pudo cambiar el perfil (power-profiles-daemon).")
             self.note.show()
         self.poll()
+
+    def apply_charge_limit(self, checked):
+        objetivo = CARGA_PROTEGIDA if checked else CARGA_COMPLETA
+        if self.hw.set_charge_limit(objetivo):
+            self.limite_pedido = objetivo
+        else:
+            self.note.setText("No se pudo cambiar el límite de carga (asusctl).")
+            self.note.show()
+        self.poll()      # el boton se queda con el valor real, no con el pedido
 
     def on_tray_click(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
@@ -721,6 +796,30 @@ class ZenMonitor(QWidget):
                         "el máximo medido en este equipo\n"
                         f"Reloj (UCLK): {mmhz} de {g['mem_mhz_max']} MHz máximo",
                         sub=f"a {mmhz}")
+
+        limite = self.hw.charge_limit()
+        self.bat_btn.setVisible(limite is not None)
+        self.tray_bat.setVisible(limite is not None)
+        if self.limite_pedido is not None and limite == self.limite_pedido:
+            # ya esta escrito de verdad: ahora KDE puede releerlo
+            self.limite_pedido = None
+            self.hw.nudge_powerdevil()
+        if limite is not None:
+            protegida = limite <= CARGA_PROTEGIDA
+            self.bat_btn.setChecked(protegida)
+            self.tray_bat.setChecked(protegida)
+            bat = self.hw.battery()
+            ahora = "" if bat["pct"] is None else (
+                f"\nAhora: {bat['pct']} %"
+                + (f" ({BAT_ESTADO.get(bat['estado'], bat['estado'])})"
+                   if bat["estado"] else ""))
+            self.bat_btn.setToolTip(
+                f"La carga se detiene al {limite} %.\n"
+                + ("Desactívalo para cargar hasta el 100 % antes de un viaje."
+                   if protegida else
+                   "Actívalo para dejarla al 80 %: una batería que no vive llena "
+                   "envejece mucho más despacio.")
+                + f"\nLo aplica asusd y sobrevive al reinicio.{ahora}")
 
         cur = self.current_profile()
         for btn in self.group.buttons():
