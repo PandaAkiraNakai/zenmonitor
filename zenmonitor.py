@@ -536,7 +536,11 @@ class ZenMonitor(QWidget):
         row2.addWidget(self.w_all)
         root.addLayout(row2)
 
-        root.addWidget(self.section("Perfil"))
+        perfil = self.section("Perfil")
+        perfil.setToolTip(
+            "Este equipo no admite velocidad manual de ventilador: no hay nodo pwm1 "
+            "y el EC ignora pwm1_enable=0.\nLa curva la fija el perfil.")
+        root.addWidget(perfil)
 
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
@@ -553,11 +557,11 @@ class ZenMonitor(QWidget):
             prow.addWidget(b)
         root.addLayout(prow)
 
-        self.note = QLabel(
-            "Este equipo no admite velocidad manual: el EC ignora pwm1_enable=0 "
-            "y no hay nodo pwm1. La curva la fija el perfil.")
+        # Solo aparece si algo falla; el resto del tiempo no ocupa sitio.
+        self.note = QLabel()
         self.note.setObjectName("note")
         self.note.setWordWrap(True)
+        self.note.hide()
         root.addWidget(self.note)
 
         self.apply_style()
