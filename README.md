@@ -192,3 +192,7 @@ tipo 17, que solo es legible como root.
 ## Licencia
 
 MIT. Ver [LICENSE](LICENSE).
+
+<!-- profile-excerpt -->
+**Monitor de bandeja** para el Zenbook (**Ryzen AI 7 445 + Radeon 840M**): RPM del ventilador con aguja e histórico, carga de **CPU/GPU/RAM/VRAM**, **ancho de banda de la DRAM** leído del volcado binario `gpu_metrics` del SMU, temperaturas y consumo. Cambia el **perfil de plataforma** (power-profiles-daemon) y el **límite de carga de la batería** 80/100 % (asusctl, sin contraseña), y la **tecla F12** del logo Zen abre la ventana leyendo el evento crudo de evdev. Documenta con medidas por qué el ventilador no admite control manual.
+<!-- /profile-excerpt -->
